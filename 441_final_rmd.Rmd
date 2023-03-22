@@ -1,0 +1,472 @@
+---
+title: "441 final rmd"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(psych)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(leaps)
+library(glmnet)
+library(randomForest)
+library(nnet)
+library(caret)
+
+```
+
+## EDA
+```{r cars}
+set.seed(1)
+star_classification = read.csv("C:\\Users\\steve\\Documents\\Academia M\\Fall 2022 Term\\STAT441 - Classification\\Final Project\\star_classification.csv")
+sc<-star_classification
+#head(df)
+str(sc)
+df<-sc[c(2,3,4,5,6,7,8,13,14,15,16,17)]
+df$class<-as.factor(df$class)
+str(df)
+num_of_samples = 10000
+sample_rows <- sample(1:nrow(sc), num_of_samples)
+df<-df[sample_rows,]
+head(df)
+```
+
+
+## 
+```{r}
+numeric_df<-df[c(1,2,3,4,5,6,7,8,10)]
+cor(numeric_df)
+# Uncomment later
+#pairs.panels(numeric_df)
+par(mfrow=c(3,3))
+for (i in 1:ncol(numeric_df)){
+  qqnorm(numeric_df[,i])
+}
+par(mfrow=c(1,1))
+```
+
+```{r}
+class_percentage<- summary(factor(df$class))*100/length(df$class)
+class_percentage
+b1<-ggplot(df,aes(x=class,colour=class,fill=class))+geom_bar() +
+  scale_fill_discrete(name="Percentage Composition",breaks = c("GALAXY", "QSO", "STAR"), labels= c("GALAXY (59.18%)", "QSO (19.32%)", "STAR (21.5%)"))
+b2<-ggplot(df,aes(x=log(redshift),fill=class,colour=class)) +geom_density(alpha=0.2)
+b3<-ggplot(df,aes(x=alpha,fill=class,colour=class)) +geom_density(alpha=0.2)
+b4<-ggplot(df,aes(x=delta,fill=class,colour=class)) +geom_density(alpha=0.2)
+b5<-ggplot(df,aes(x=plate,fill=class,colour=class)) +geom_density(alpha=0.2)
+b6<-ggplot(df,aes(x=log(u),fill=class,colour=class)) +geom_density(alpha=0.2)
+#grid.arrange(b1,b2,b3,b4,b5,b6,ncol=3)
+b1
+b2
+b3
+b4
+b5
+b6
+```
+```{r}
+p1<-ggplot(df,aes(x=alpha,y=log(redshift),colour=class))+geom_point()
+p2<-ggplot(df,aes(x=delta,y=log(redshift),colour=class))+geom_point()
+p3<-ggplot(df,aes(x=u,y=log(redshift),colour=class))+geom_point()
+p4<-ggplot(df,aes(x=g,y=log(redshift),colour=class))+geom_point()
+p5<-ggplot(df,aes(x=r,y=log(redshift),colour=class))+geom_point()
+p6<-ggplot(df,aes(x=i,y=log(redshift),colour=class))+geom_point()
+p7<-ggplot(df,aes(x=z,y=log(redshift),colour=class))+geom_point()
+p8<-ggplot(df,aes(x=spec_obj_ID,y=log(redshift),colour=class))+geom_point()
+p9<-ggplot(df,aes(x=plate,y=log(redshift),colour=class))+geom_point()
+p10<-ggplot(df,aes(x=MJD,y=log(redshift),colour=class))+geom_point()
+#grid.arrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,ncol=5) # Zoom to see clearly, very interesting
+p5
+```
+## Feature Selection
+```{r}
+train = sample(nrow(df), nrow(df)*0.8,replace=F)
+star.train = df[train,]
+star.test = df[-train,]
+
+## Which subset to use?
+regfit.full <- regsubsets(factor(class)~., star.train)
+reg.summary <- summary(regfit.full)
+reg.summary
+print("The number of variables for the best subset is: ")
+which.min(reg.summary$bic)
+which.min(reg.summary$cp)
+which.min(reg.summary$rss)
+which.min(reg.summary$adjr2)
+which.min(reg.summary$rsq)
+plot(reg.summary$bic, xlab = "Number of Variables",
+ylab = "BIC", main = "Feature selection", type = "l")
+points(6, reg.summary$bic[6], col = "green", cex = 2, pch = 1)
+
+print("The coefficients and corresponding values are:")
+coeff <- coef(regfit.full, 6)
+print(coeff)
+```
+```{r}
+x = model.matrix(class~., data = star.train)[, -1]
+x_test = model.matrix(class~., data = star.test)[, -1]
+y_test = star.test$class
+y = star.train$class
+
+
+grid =10^seq(-2, 3, length=100)
+lasso.model = glmnet(x, y, alpha = 1 , lambda = grid, family = "multinomial")
+plot(lasso.model, xvar = "lambda" , label = TRUE)
+plot(lasso.model$lambda, lasso.model$df, xlab = "Lambda", ylab = "Model Size")
+ 
+cv.fit = cv.glmnet(x , y, alpha = 1 , nfolds = 10, lambda = grid, family = "multinomial", type.multinomial = "grouped")
+
+plot(cv.fit)
+bestlambda = cv.fit$lambda.min
+
+print("The coefficients for lambda.min are:")
+coef(cv.fit, s = "lambda.min")
+
+print("The coefficients for lambda.1se are:")
+oneselamda = cv.fit$lambda.1se
+coef(cv.fit, s = "lambda.1se")
+```
+```{r}
+cv.fit
+print("The test error using lambda.min is: ")
+pred = predict(cv.fit, newx = x_test, s = "lambda.min" )
+# confusionMatrix(factor(pred), star.test$class)$table
+
+print("The test error using lambda.1se is: ")
+pred = predict(cv.fit, newx = x_test, s = "lambda.1se" )
+# confusionMatrix(factor(pred), factor(star.test$class))$table
+```
+```{r}
+library(class)
+testerror.knn = rep(NA, 20)
+for (j in 1:20) {
+  set.seed(441)
+  knn.pred = knn(data.frame(star.train$u), data.frame(star.test$u), star.train$class, k=j)
+  testerror.knn[j] = mean(knn.pred != star.test$class)
+
+}
+```
+
+```{r}
+plot(testerror.knn, xlab = "Number of Neighbors",
+ylab = "Test Error", main = "Choosing Suitable k", type = "l")
+knn.pred= knn(data.frame(star.train$alpha), data.frame(star.test$alpha), star.train$class, k=200)
+confusionMatrix(knn.pred, star.test$class)$table
+```
+## Random Forest
+```{r}
+rf.model <- train(class~., data = star.train, method = 'rf', trControl = trainControl(method = 'cv', number = 5))
+
+```
+
+```{r}
+rf.model
+rf.pred <- predict(rf.model, newdata = star.test)
+confusionMatrix(factor(rf.pred), factor(star.test$class))$table
+```
+
+## Logistic
+```{r}
+star.train$class <- relevel(star.train$class, ref = "STAR")
+# Training the multinomial model
+multinom_model <- multinom(class ~ g + i+ z + spec_obj_ID + redshift + MJD, data = star.train)
+# Checking the model
+summary(multinom_model)
+logi.pred <- predict(multinom_model, newdata = star.test, "class")
+levels(logi.pred) = rev(levels(logi.pred))
+confusionMatrix(logi.pred, star.test$class, positive="STAR")$table
+```
+
+## Neural Net
+```{r}
+# Neural Networks
+# Use set.seed(1) throughout for consistency
+library(nnet)
+
+# Create training, validation, and test sets
+set.seed(1)
+trainSet = df[1:5000,]
+validSet = df[5001:7500,]
+testSet = df[7501:10000,]
+
+# Rescale all variables (even categeorical) to have (mean,sd)=(0,1)
+dfscaled = as.matrix(df[,-9])
+
+for (i in 1:ncol(dfscaled)) {
+  mx_mean = mean(dfscaled[,i])
+  mx_sd = sd(dfscaled[,i])
+  dfscaled[,i] = (dfscaled[,i]-mx_mean)/mx_sd
+}
+
+trainMx = dfscaled[1:5000,]
+validMx = dfscaled[5001:7500,]
+testMx = dfscaled[7501:10000,]
+
+# Responses for SOFTMAX classification must be matrix of indicators for each category
+# Created by class.ind()
+
+trainY = class.ind(trainSet[,9])
+validY = class.ind(validSet[,9])
+testY = class.ind(testSet[,9])
+
+# Single Hidden Layer regression
+# Classification: "softmax=true"
+# No shrinkage
+# Size 1
+set.seed(1)
+nn.1.0 = nnet(x=trainMx, y=trainY, size=1, maxit=1000, softmax=TRUE)
+# Train error
+predTrain.1.0 <-predict(nn.1.0, newdata=trainMx, type="class")
+table(predTrain.1.0, as.factor(trainSet$class),  dnn=c("Predicted","Observed"))
+(trainMisclass.1.0 <- mean(ifelse(predTrain.1.0 == as.factor(trainSet$class), yes=0, no=1)))
+# Validation error
+predValid.1.0 = predict(nn.1.0, newdata=validMx, type="class")
+table(predValid.1.0, as.factor(validSet$class),  dnn=c("Predicted","Observed"))
+(validMisclass.1.0 <- mean(ifelse(predValid.1.0 == as.factor(validSet$class), yes=0, no=1)))
+# Test set error
+predTest.1.0 = predict(nn.1.0, newdata=testMx, type="class")
+table(predTest.1.0, as.factor(testSet$class),  dnn=c("Predicted","Observed"))
+(testMisclass.1.0 <- mean(ifelse(predTest.1.0 == as.factor(testSet$class), yes=0, no=1)))
+
+# Focus on two tuning parameters: decay (shrinkage) and size
+# Optimization: adding size
+# Shrinkage: "decay=" value from [0.0001,0.1]
+# Only 25 values tested due to computational bounds
+decay = seq(from=0.0001,to=0.1,length.out=25)
+nn.shrinkage.errs = sapply(decay, function(d){
+  set.seed(1)
+  p = nnet(x=trainMx, y=trainY, size=1, decay=d, maxit=1000, softmax=TRUE)
+  predValid = predict(p, newdata=validMx, type="class")
+  validErr = mean(ifelse(predValid == as.factor(validSet$class), yes=0, no=1))
+  predTest = predict(p, newdata=testMx, type="class")
+  testErr = mean(ifelse(predTest == as.factor(testSet$class), yes=0, no=1))
+  return(list(validErr = validErr, testErr = testErr))
+})
+plot(decay,nn.shrinkage.errs[1,],main="Shrinkage vs Error",xlab="Shrinkage",
+     ylab="Err",col="blue",type="l",)
+points(decay,nn.shrinkage.errs[2,],type="l",col="green")
+legend("topright",legend=c("Valid.","Test"),col=c("blue","green"),lty=c(1,1))
+# We select decay to be the minimum from our validation error
+optDecay = decay[which.min(unlist(nn.shrinkage.errs[1,]))]
+set.seed(1)
+nn.shrinkage.opt = nnet(x=trainMx, y=trainY, size=1, decay=optDecay, maxit=1000, softmax=TRUE)
+nn.shrinkage.opt.predTest = predict(nn.shrinkage.opt, newdata=testMx, type="class")
+
+# Number of Units: "size=" more units give more flexibility in model, but more likelihood to overfit
+sizes = seq(from=1,to=20)
+nn.size.errs = sapply(sizes, function(s){
+  set.seed(1)
+  p = nnet(x=trainMx, y=trainY, size=s, decay=optDecay, maxit=1000, softmax=TRUE)
+  predValid = predict(p, newdata=validMx, type="class")
+  validErr = mean(ifelse(predValid == as.factor(validSet$class), yes=0, no=1))
+  predTest = predict(p, newdata=testMx, type="class")
+  testErr = mean(ifelse(predTest == as.factor(testSet$class), yes=0, no=1))
+  return(list(validErr = validErr, testErr = testErr))
+})
+plot(sizes,nn.size.errs[1,],main="Size vs Error",xlab="Size",
+     ylab="Err",col="blue",type="l")
+points(sizes,nn.size.errs[2,],type="l",col="green")
+legend("topright",legend=c("Valid.","Test"),col=c("blue","green"),lty=c(1,1))
+
+# Select optimal size
+optSize = sizes[which.min(unlist(nn.size.errs[1,]))]
+set.seed(1)
+nn.size.opt = nnet(x=trainMx, y=trainY, size=optSize, decay=optDecay, maxit=1000, softmax=TRUE)
+nn.size.opt.predTest = predict(nn.size.opt, newdata=testMx, type="class")
+
+
+# Repetition: required to adjust for fact that local minimums and possibility for overfitting can occur 
+#          given various random starting weights
+# Takes majority prediction, rather than averaging the weights due to non-linearity of weights
+set.seed(1)
+nn.repeat.predictors = lapply(seq(1,100),function(i){
+  nnet(x=trainMx, y=trainY, size=optSize, decay=optDecay, maxit=1000, softmax=TRUE)
+})
+nn.repeat.predictions = sapply(nn.repeat.predictors, function(p){
+  predTest = unlist(predict(p, newdata=testMx, type="class"))
+})
+nn.repeat.class = apply(nn.repeat.predictions, MARGIN = 1, function(x){
+  uniquex = unique(x)
+  uniquex[which.max(tabulate(match(x,uniquex)))]
+})
+testErr.repeat = mean(ifelse(nn.repeat.class == as.factor(testSet$class), yes=0, no=1))
+
+# Bagging: Alternate to repetition, creates slightly different samples each time
+set.seed(1)
+nn.bagging.predictors = lapply(seq(1,100),function(i){
+  trainSample = sample(nrow(trainSet),nrow(trainSet),replace = TRUE)
+  bagTrainMx = dfscaled[trainSample,]
+  bagTrainY = class.ind(trainSet[trainSample,9])
+  nnet(x=bagTrainMx, y=bagTrainY, size=optSize, decay=optDecay, maxit=1000, softmax=TRUE)
+})
+nn.bagging.predictions = sapply(nn.bagging.predictors, function(p){
+  predTest = unlist(predict(p, newdata=testMx, type="class"))
+})
+nn.bagging.class = apply(nn.bagging.predictions, MARGIN = 1, function(x){
+  uniquex = unique(x)
+  uniquex[which.max(tabulate(match(x,uniquex)))]
+})
+testErr.bagging = mean(ifelse(nn.bagging.class == as.factor(testSet$class), yes=0, no=1))
+
+# Try grid search with caret library
+# Very computationally intensive
+library(caret)
+set.seed(1)
+tuned.nnet <- caret::train(x=trainSet[,-9], y=trainSet[,9], method="nnet", preProcess="range", trace=FALSE, 
+                           tuneGrid=expand.grid(.size=c(1,5,10,15),.decay=c(0,0.001,0.01,0.1)))
+
+tuned.nnet$results[order(-tuned.nnet$results[,3]),]
+tuned.nnet$bestTune
+
+# Try boxplots to see variability of the two tuning parameters
+x11(h=7, w=10)
+par(mfrow=c(1,2))
+boxplot((1-Accuracy) ~ size, data=tuned.nnet$results)
+boxplot((1-Accuracy) ~ decay, data=tuned.nnet$results)
+
+# We try NN with the bestTune parameters from grid search
+set.seed(1)
+nn.caret = nnet(x=trainMx, y=trainY, size=tuned.nnet$bestTune$size, maxit=1000, 
+                decay=tuned.nnet$bestTune$decay, softmax=TRUE)
+nn.caret.pred = predict(nn.caret, newdata=testMx, type="class")
+
+table(nn.caret.pred, as.factor(testSet$class),  dnn=c("Predicted","Observed"))
+(misclass.caret <- mean(ifelse(nn.caret.pred == as.factor(testSet$class), yes=0, no=1)))
+
+# Multilayer neural networks using neuralnet package
+library(neuralnet)
+
+trainData = cbind(trainY,trainMx)
+nnFormula = as.formula(paste("GALAXY + QSO + STAR ~", paste(names(trainSet[,-9]), collapse = " + ")))
+
+set.seed(1)
+neural.1 = neuralnet(nnFormula, trainData, hidden=10, rep=3, err.fct="sse", act.fct="logistic",
+                   threshold = 1, stepmax = 10000, lifesign = 'minimal', linear.output=FALSE)
+
+# Predicts probability for each of the 3 classes
+nn.fancy.1.preds = compute(neural.1,testMx)$net.result
+colnames(nn.fancy.1.preds) = c("GALAXY", "QSO", "STAR")
+nn.fancy.1.class = data.frame("class" = 
+                                ifelse(max.col(nn.fancy.1.preds[ ,1:3])==1, "GALAXY", 
+                                       ifelse(max.col(nn.fancy.1.preds[ ,1:3])==2, 
+                                              "QSO", "STAR")))
+# Confusion Matrix
+caret::confusionMatrix(as.factor(testSet[,9]),as.factor(nn.fancy.1.class[,1]))
+# Test Error
+misclass.fancy.1 <- mean(ifelse(nn.fancy.1.class[,1] == as.factor(testSet$class), yes=0, no=1))
+
+
+# We try some different amounts of hidden layers and nodes per layer
+# ###
+# 1 Layer x 6 Nodes
+# ###
+set.seed(1)
+neural.2 = neuralnet(nnFormula, trainData, hidden=6, rep=3, err.fct="sse", act.fct="logistic",
+                     threshold = 1, stepmax = 10000, lifesign = 'minimal', linear.output=FALSE)
+
+nn.fancy.2.preds = compute(neural.2,testMx)$net.result
+colnames(nn.fancy.2.preds) = c("GALAXY", "QSO", "STAR")
+nn.fancy.2.class = data.frame("class" = 
+                                ifelse(max.col(nn.fancy.2.preds[ ,1:3])==1, "GALAXY", 
+                                       ifelse(max.col(nn.fancy.2.preds[ ,1:3])==2, 
+                                              "QSO", "STAR")))
+# Confusion Matrix
+caret::confusionMatrix(as.factor(testSet[,9]),as.factor(nn.fancy.2.class[,1]))
+# Test Error
+misclass.fancy.2 <- mean(ifelse(nn.fancy.2.class[,1] == as.factor(testSet$class), yes=0, no=1))
+
+# ###
+# 2 Layer x 5 Nodes
+# ###
+set.seed(1)
+neural.3 = neuralnet(nnFormula, trainData, hidden=c(5,5), rep=3, err.fct="sse", act.fct="logistic",
+                     threshold = 1, stepmax = 10000, lifesign = 'minimal', linear.output=FALSE)
+
+nn.fancy.3.preds = compute(neural.3,testMx)$net.result
+colnames(nn.fancy.3.preds) = c("GALAXY", "QSO", "STAR")
+nn.fancy.3.class = data.frame("class" = 
+                                ifelse(max.col(nn.fancy.3.preds[ ,1:3])==1, "GALAXY", 
+                                       ifelse(max.col(nn.fancy.3.preds[ ,1:3])==2, 
+                                              "QSO", "STAR")))
+# Confusion Matrix
+caret::confusionMatrix(as.factor(testSet[,9]),as.factor(nn.fancy.3.class[,1]))
+# Test Error
+misclass.fancy.3 <- mean(ifelse(nn.fancy.3.class[,1] == as.factor(testSet$class), yes=0, no=1))
+
+# ###
+# 3 Layer x 5 Nodes
+# ###
+set.seed(1)
+neural.4 = neuralnet(nnFormula, trainData, hidden=c(5,5,5), rep=2, err.fct="sse", act.fct="logistic",
+                     threshold = 1, stepmax = 10000, lifesign = 'minimal', linear.output=FALSE)
+
+nn.fancy.4.preds = compute(neural.4,testMx)$net.result
+colnames(nn.fancy.4.preds) = c("GALAXY", "QSO", "STAR")
+nn.fancy.4.class = data.frame("class" = 
+                                ifelse(max.col(nn.fancy.4.preds[ ,1:3])==1, "GALAXY", 
+                                       ifelse(max.col(nn.fancy.4.preds[ ,1:3])==2, 
+                                              "QSO", "STAR")))
+# Confusion Matrix
+caret::confusionMatrix(as.factor(testSet[,9]),as.factor(nn.fancy.4.class[,1]))
+# Test Error
+misclass.fancy.4 <- mean(ifelse(nn.fancy.4.class[,1] == as.factor(testSet$class), yes=0, no=1))
+
+# ###
+# 5 Layer x 5 Nodes
+# ###
+set.seed(1)
+neural.5 = neuralnet(nnFormula, trainData, hidden=c(5,5,5,5,5), rep=1, err.fct="sse", act.fct="logistic",
+                     threshold = 1, stepmax = 20000, lifesign = 'minimal', linear.output=FALSE)
+
+nn.fancy.5.preds = compute(neural.5,testMx)$net.result
+colnames(nn.fancy.5.preds) = c("GALAXY", "QSO", "STAR")
+nn.fancy.5.class = data.frame("class" = 
+                                ifelse(max.col(nn.fancy.5.preds[ ,1:3])==1, "GALAXY", 
+                                       ifelse(max.col(nn.fancy.5.preds[ ,1:3])==2, 
+                                              "QSO", "STAR")))
+# Confusion Matrix
+caret::confusionMatrix(as.factor(testSet[,9]),as.factor(nn.fancy.5.class[,1]))
+# Test Error
+misclass.fancy.5 <- mean(ifelse(nn.fancy.5.class[,1] == as.factor(testSet$class), yes=0, no=1))
+
+# Could do caret::train, method = 'neuralnet'
+# Tunes layer1, layer2, layer3 sizes
+# But very time consuming
+
+# Comparison of models:
+# Single Layer, Single Layer w/optimal shrinkage, Single Layer w/optimal shrinkage and size
+# Single Layer bagging, Caret Single Layer, 2 Layer x 5 Nodes, 3 Layer x 5 Nodes, 5 Layer x 5 Nodes
+# Test errors
+layer1.size1.err = testMisclass.1.0
+layer1.optshrink.err = min(unlist(nn.shrinkage.errs[1,]))
+layer1.optsize.err = min(unlist(nn.size.errs[1,]))
+layer1.repeat = testErr.repeat
+layer1.bagging = testErr.bagging
+layer1.caret.err = misclass.caret
+layer2.size5.err = misclass.fancy.3
+layer3.size5.err = misclass.fancy.4
+layer5.size5.err = misclass.fancy.5
+
+# Confusion Matrices
+layer1.size1.cm = caret::confusionMatrix(as.factor(predTest.1.0),as.factor(testSet[,9]))$table
+layer1.optshrink.cm = caret::confusionMatrix(as.factor(nn.shrinkage.opt.predTest),as.factor(testSet[,9]))$table
+layer1.optsize.cm = caret::confusionMatrix(as.factor(nn.size.opt.predTest),as.factor(testSet[,9]))$table
+layer1.repeat.cm = caret::confusionMatrix(as.factor(nn.repeat.class),as.factor(testSet[,9]))$table
+layer1.bagging.cm = caret::confusionMatrix(as.factor(nn.bagging.class),as.factor(testSet[,9]))$table
+layer1.caret.cm = caret::confusionMatrix(as.factor(nn.caret.pred),as.factor(testSet[,9]))$table
+layer2.size5.cm = caret::confusionMatrix(as.factor(nn.fancy.3.class[,1]),as.factor(testSet[,9]))$table
+layer3.size5.cm = caret::confusionMatrix(as.factor(nn.fancy.4.class[,1]),as.factor(testSet[,9]))$table
+layer5.size5.cm = caret::confusionMatrix(as.factor(nn.fancy.5.class[,1]),as.factor(testSet[,9]))$table
+
+# Neural Net Plots
+library(NeuralNetTools)
+plotnet(nn.1.0, neg_col="lightblue", circle_col = "pink")
+plotnet(nn.shrinkage.opt, neg_col="lightblue", circle_col = "pink")
+plotnet(nn.size.opt, neg_col="lightblue", circle_col = "pink")
+# Repeat and Bagging approach does not have a model, takes majority prediction for 100 NNs
+plotnet(nn.caret, neg_col="lightblue", circle_col = "pink")
+plotnet(neural.3, neg_col="lightblue", circle_col = "pink")
+plotnet(neural.4, neg_col="lightblue", circle_col = "pink")
+plotnet(neural.5, neg_col="lightblue", circle_col = "pink")
+```
